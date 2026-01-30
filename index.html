@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>高空作業車預約詢價</title>
+  
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- SweetAlert2 -->
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+
+  <style>
+    body { background-color: #f8f9fa; font-family: "Microsoft JhengHei", sans-serif; }
+    .main-container {
+      max-width: 600px; margin: 20px auto; background: #fff;
+      padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    .header-title { color: #0d6efd; font-weight: bold; margin-bottom: 20px; text-align: center; }
+    .required-mark { color: red; margin-left: 3px; }
+    #loadingOverlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(255, 255, 255, 0.9); z-index: 9999;
+      display: flex; justify-content: center; align-items: center; flex-direction: column;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- Loading -->
+  <div id="loadingOverlay">
+    <div class="spinner-border text-primary" role="status"></div>
+    <div class="mt-2 fw-bold text-primary">系統連線中...</div>
+  </div>
+
+  <div class="container">
+    <div class="main-container">
+      <h3 class="header-title">🏗️ 高空作業車預約詢價</h3>
+      
+      <form id="bookingForm">
+        <div class="row mb-3">
+          <div class="col-6">
+            <label class="form-label">聯絡人<span class="required-mark">*</span></label>
+            <input type="text" class="form-control" id="userName" required>
+          </div>
+          <div class="col-6">
+            <label class="form-label">電話<span class="required-mark">*</span></label>
+            <input type="tel" class="form-control" id="userPhone" required>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">施工地址<span class="required-mark">*</span></label>
+          <textarea class="form-control" id="address" rows="2" required></textarea>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">預約車型<span class="required-mark">*</span></label>
+          <select class="form-select" id="carType" required>
+            <option value="" selected disabled>載入中...</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">開始時間<span class="required-mark">*</span></label>
+          <div class="input-group">
+            <input type="date" class="form-control" id="startDate" required>
+            <input type="time" class="form-control" id="startTime" required>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label">結束時間<span class="required-mark">*</span></label>
+          <div class="input-group">
+            <input type="date" class="form-control" id="endDate" required>
+            <input type="time" class="form-control" id="endTime" required>
+          </div>
+        </div>
+
+        <div class="d-grid">
+          <button type="submit" class="btn btn-primary btn-lg">🚀 送出預約</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+  <script>
+    // ==========================================
+    // ⚠️ 請在這裡貼上您的 GAS 部署網址 (以 /exec 結尾)
+    const GAS_API_URL = 'https://script.google.com/macros/library/d/1iwYI7ZuCozKcqISKnXy22FCkOv50IMIKPbkSjGFT9_ie6nVVNNVgaErE/3'; 
+    // 例如: const GAS_API_URL = 'https://script.google.com/macros/s/xxxx/exec';
+    // ==========================================
+
+    // 這裡要填您的 LIFF ID (從專案設定看，或直接貼上)
+    const LIFF_ID = '1657xxxxxx-xxxxxx'; 
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      // 1. 設定日期預設值
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('startDate').value = today;
+      document.getElementById('endDate').value = today;
+
+      // 2. 初始化 LIFF (為了抓名字)
+      if (LIFF_ID && LIFF_ID.length > 5) {
+        try {
+          await liff.init({ liffId: LIFF_ID });
+          if (liff.isLoggedIn()) {
+             const profile = await liff.getProfile();
+             document.getElementById('userName').value = profile.displayName || '';
+          }
+        } catch (e) { console.log('LIFF init failed', e); }
+      }
+
+      // 3. 呼叫 GAS 取得車輛清單 (使用 fetch)
+      fetchCarList();
+    });
+
+    // 取得車輛清單
+    function fetchCarList() {
+      if (GAS_API_URL.includes('請貼上')) {
+        handleError('請先在程式碼中設定 GAS_API_URL');
+        return;
+      }
+
+      // 使用 Web API fetch 呼叫 doGet
+      fetch(`${GAS_API_URL}?action=getCarList`)
+        .then(response => response.json())
+        .then(res => {
+          if (res.success) {
+            populateCarList(res.data);
+          } else {
+            handleError('讀取失敗: ' + res.message);
+          }
+        })
+        .catch(err => handleError('連線錯誤: ' + err));
+    }
+
+    function populateCarList(cars) {
+      const select = document.getElementById('carType');
+      select.innerHTML = '<option value="" selected disabled>請選擇車型</option>';
+      cars.forEach(car => {
+        const option = document.createElement('option');
+        option.value = car;
+        option.textContent = car;
+        select.appendChild(option);
+      });
+      showLoading(false);
+    }
+
+    // 表單送出
+    document.getElementById('bookingForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      
+      // 組合資料
+      const sDate = document.getElementById('startDate').value;
+      const sTime = document.getElementById('startTime').value;
+      const eDate = document.getElementById('endDate').value;
+      const eTime = document.getElementById('endTime').value;
+
+      const payload = {
+        userName: document.getElementById('userName').value,
+        userPhone: document.getElementById('userPhone').value,
+        address: document.getElementById('address').value,
+        carType: document.getElementById('carType').value,
+        startTime: `${sDate}T${sTime}`,
+        endTime: `${eDate}T${eTime}`
+      };
+
+      showLoading(true);
+
+      // 使用 POST 送出 JSON
+      fetch(GAS_API_URL, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
+      .then(res => res.json())
+      .then(response => {
+        showLoading(false);
+        if (response.success) {
+          Swal.fire('成功', '預約已送出！', 'success').then(() => {
+            if (liff.isInClient()) liff.closeWindow();
+            else location.reload();
+          });
+        } else {
+          Swal.fire('失敗', response.message, 'error');
+        }
+      })
+      .catch(err => {
+        showLoading(false);
+        Swal.fire('連線錯誤', '無法連接伺服器', 'error');
+      });
+    });
+
+    function showLoading(show) {
+      document.getElementById('loadingOverlay').classList.toggle('hidden', !show);
+    }
+    
+    function handleError(msg) {
+      showLoading(false);
+      Swal.fire('錯誤', msg, 'error');
+    }
+    
+    // 日期連動
+    document.getElementById('startDate').addEventListener('change', function() {
+      document.getElementById('endDate').value = this.value;
+    });
+  </script>
+</body>
+</html>
